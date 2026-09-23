@@ -1,17 +1,17 @@
 # OpenAgenticDAM — Product Requirements Document
 
-Sep 22, 2026 · @Someone
+Sep 22, 2026
 
 ## Dokument-Status
 
-Entwurf v0.9, konsolidiert aus Master Plan v1.0.0, README und Markt-/Architektur-Notiz; Widersprüche zwischen den Quellen sind hier aufgelöst.
+Entwurf v0.9.
 
 | Feld | Wert |
 | --- | --- |
 | Projekt | OpenAgenticDAM |
-| Repository | [github.com/OpenAgenticDAM](https://github.com/OpenAgenticDAM) (Org existiert, Besitz bestätigen) |
+| Repository | [github.com/OpenAgenticDAM](https://github.com/OpenAgenticDAM) |
 | Lizenz | Apache 2.0, Open-Core |
-| Zielgruppe des Dokuments | Architekten, Entwickler, Enterprise-IT, Marketing-Ops, Investoren |
+| Zielgruppe des Dokuments | Architekten, Entwickler, Enterprise-IT, Marketing-Ops |
 | Status | Entwurf, Problemvalidierung ausstehend |
 
 ## Executive Summary & Vision
@@ -273,7 +273,7 @@ CREATE TABLE audit_log (
 );
 ```
 
-Änderungen gegenüber dem Master Plan: Hash ist nicht mehr global eindeutig (dieselbe Datei kann in mehreren Quellen liegen), Embeddings sind versioniert und pro Video-Segment, Rechte und ACL sind eigene Tabellen. Die Vektordimension hängt vom gewählten Modell ab.
+Designhinweise: Der Hash ist nicht global eindeutig (dieselbe Datei kann in mehreren Quellen liegen), Embeddings sind versioniert und pro Video-Segment, Rechte und ACL sind eigene Tabellen. Die Vektordimension hängt vom gewählten Modell ab.
 
 ## Sicherheit, Rechte & Compliance
 
@@ -305,7 +305,7 @@ Zielwerte für das MVP; alle Werte sind Annahmen und werden im Pilot kalibriert.
 
 ## Deployment & Hardware
 
-Drei Ausbaustufen; Kosten sind Orientierungswerte aus dem Master Plan und bei Hostern zu verifizieren.
+Drei Ausbaustufen; Kosten sind grobe Orientierungswerte und hängen vom Hoster ab.
 
 | Stufe | Zweck | Spezifikation | Kosten (€/Monat) |
 | --- | --- | --- | --- |
@@ -317,22 +317,9 @@ Für Rechenzentrumsbetrieb Workstation- oder Datacenter-GPUs einplanen; die NVID
 
 Lokaler Start: `docker compose up` (Postgres, Redis, MinIO), `uv sync`, `alembic upgrade head`, dann Worker und MCP-Server starten und in `claude_desktop_config.json` eintragen.
 
-## Geschäftsmodell & Pricing
+## Geschäftsmodell
 
-Das Geld liegt im Enterprise-Geschäft: Piloten und Services finanzieren den Start, Jahreslizenzen für Self-Hosting bilden den wiederkehrenden Umsatz. Alle Preise sind Annahmen und in den Design-Partner-Piloten zu validieren.
-
-| Erlösquelle | Modell | Preisannahme | Phase |
-| --- | --- | --- | --- |
-| Design-Partner-Pilot | Festpreis-PoC, 8–12 Wochen, gegen Case Study | 15–30 T€ | sofort |
-| Enterprise-Lizenz (self-hosted) | Jahresabo, gestaffelt nach Asset-Volumen und angebundenen Quellen; inkl. SSO, RBAC, Multi-Tenancy, Support-SLA | 30–80 T€/Jahr | ab v0.5 |
-| Kommerzielle Adapter | Bynder, Celum, Canto usw.; S3/MinIO bleibt Open Source | im Enterprise-Paket | ab v0.2 |
-| Compliance-Pack | Audit-Reports für Prüfer, C2PA-Signierung mit Kundenschlüsseln, Aufbewahrungsregeln | Aufpreis 20–30 % | ab v0.4 |
-| Services | Einführung, Individual-Adapter, Fine-Tuning von Vision-Modellen auf Kundenprodukte | Tagessätze | ab erstem Kunden |
-| Partner-Kanal | Umsatzbeteiligung für Systemintegratoren | 20–30 % | ab v0.5 |
-| Managed Cloud | nutzungsbasiert: Assets + Verarbeitungsminuten | nach Kostenmodell | ab v1.0 |
-| UXP-Panels | Photoshop-/Premiere-Chat-Panel, Abo pro Nutzer | offen | nach Marktprüfung |
-
-Das Basis-Audit-Log bleibt Open Core; verkauft wird Auswertung und Absicherung für Prüfer. Das Master-Plan-Ziel „SaaS ab 29 $/Monat“ entfällt: Es trägt die GPU-Kosten von 180–300 € pro Worker nicht.
+Open Core. Alles, was für den selbst gehosteten Betrieb gegen S3/MinIO nötig ist, bleibt Apache 2.0, einschließlich Audit-Log. Kommerzielle Angebote — Adapter für kommerzielle DAMs, SSO/SAML, granulares RBAC, Multi-Tenancy, Compliance-Reporting, Managed Cloud und Support — bauen auf derselben Codebasis auf. Preise sind nicht Teil dieses Dokuments.
 
 ## Kommerzialisierung & Go-to-Market
 
@@ -354,27 +341,15 @@ KMU sind bewusst kein Zielsegment: selten mehrere DAMs, Zahlungsbereitschaft pas
 **Marketing-Phasen**
 
 1. **Community-first (v0.1–v0.2):** GitHub-Launch mit Demo-Video (ein Satz durchsucht S3 und Bynder zugleich), Einträge in MCP-Registries, Launch-Posts auf Hacker News, Reddit und LinkedIn.
-2. **Thought Leadership:** Positionierung über Content Supply Chain und KI-Compliance; Whitepaper zur KI-Kennzeichnung nach EU AI Act Art. 50 im DAM; Vorträge auf DAM- und MarTech-Konferenzen; CSC-Buch als Glaubwürdigkeitsanker.
-3. **Design-Partner-Programm:** drei Pilotkunden zu reduziertem Preis gegen Case Study und Referenz; daraus die ersten Enterprise-Lizenzen.
+2. **Thought Leadership:** Positionierung über Content Supply Chain und KI-Compliance; Whitepaper zur KI-Kennzeichnung nach EU AI Act Art. 50 im DAM; Vorträge auf DAM- und MarTech-Konferenzen.
+3. **Design-Partner-Programm:** wenige Pilotkunden gegen Case Study und Referenz.
 4. **Partner-Kanal:** zwei bis drei Systemintegratoren aus dem DAM-/AEM-Umfeld mit Umsatzbeteiligung; sie bringen den Kundenzugang.
 
 **Größtes kommerzielles Risiko:** Liefern alle großen DAM-Anbieter brauchbare MCP-Server, können Kunden sie parallel an ihre Agenten hängen. Der Mehrwert muss dann aus gemeinsamer Vektorsuche, einheitlichem Rechte-/Audit-Modell und Selbst-Hosting kommen. Das ist die erste Hypothese für die Kundeninterviews.
 
-## Branding & Namenssicherung
+## Branding
 
-Der Name OpenAgenticDAM bleibt; kommerzielle Angebote laufen unter derselben Marke („OpenAgenticDAM Cloud“, „OpenAgenticDAM Enterprise“) statt einer zweiten Marke „OpenAgentic Cloud“.
-
-| Kanal | Name | Status (Prüfung 22.09.2026) |
-| --- | --- | --- |
-| GitHub | `OpenAgenticDAM`, Repo `Core` | existiert, Besitz bestätigen |
-| PyPI | `openagenticdam`, `openagenticdam-mcp` | frei |
-| npm | `openagenticdam`, `openagenticdam-mcp` | frei |
-| Domains | .com, .org, .io, .dev, .ai | kein DNS-Eintrag, per WHOIS bestätigen |
-| Marke | „OpenAgentic“ Klassen 9, 42 | DPMA, EUIPO, USPTO prüfen |
-
-- [ ] PyPI- und npm-Namen als Platzhalter reservieren
-- [ ] Domains .com und .dev registrieren
-- [ ] Markenrecherche vor öffentlichem Launch
+Der Name OpenAgenticDAM gilt für das offene Projekt und für kommerzielle Angebote („OpenAgenticDAM Cloud“, „OpenAgenticDAM Enterprise“).
 
 ## Roadmap
 
@@ -388,8 +363,6 @@ Die Reihenfolge folgt jetzt der Adapter-First-Strategie: Adapter und Rechte komm
 | v0.4 | KI-Kennzeichnung/C2PA, Collections, 3D-Pipeline, zweiter DAM-Adapter | ein Compliance-Workflow im Pilot produktiv |
 | v0.5 | SSO/SAML, granulares RBAC, Multi-Tenancy, Helm-Chart | erster zahlender Enterprise-Kunde |
 | v1.0 | Managed Cloud, UXP-Panel (nach Marktprüfung) | stabiles Pricing pro Asset |
-
-Der README-Stand „v0.1 und v0.2 erledigt“ wird korrigiert, bis Code im Repo nachweisbar ist.
 
 ## Erfolgsmetriken
 
@@ -418,14 +391,13 @@ Das größte Risiko ist nicht die Technik, sondern dass die DAM-Anbieter dieselb
 | Prompt Injection über Asset-Inhalte | Fehlaktionen des Agenten | Inhalte als Daten markieren, Bestätigung bei Schreibzugriffen |
 
 - [ ] Bynder als ersten Adapter in den Interviews bestätigen
-- [ ] Preisannahmen (Pilot 15–30 T€, Lizenz 30–80 T€/Jahr) mit Design-Partnern validieren
 - [ ] Kostenmodell pro 100.000 Assets erstellen
 - [ ] 3–5 Kundeninterviews durchführen
-- [ ] Team und Zeitplan für v0.1–v0.2 festlegen; Nebentätigkeits- und IP-Fragen der Gründer klären
+- [ ] Team und Zeitplan für v0.1–v0.2 festlegen
 
 ## Quellen
 
-Stand der Recherche: 22.09.2026. Wettbewerbsangaben aus Anbieter- und Wettbewerberseiten; vor Investorengesprächen gegenprüfen.
+Stand der Recherche: 22.09.2026. Wettbewerbsangaben aus Anbieter- und Wettbewerberseiten, möglicherweise veraltet.
 
 - [Fortune Business Insights: DAM Market Size 2026–2034](https://www.fortunebusinessinsights.com/digital-asset-management-dam-market-104914)
 - [Research and Markets: Digital Asset Management Market Report 2026](https://www.researchandmarkets.com/reports/5767251/digital-asset-management-market-report)
