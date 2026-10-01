@@ -7,15 +7,16 @@
 [![Status: pre-alpha](https://img.shields.io/badge/status-pre--alpha-orange)](#project-status)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![MCP](https://img.shields.io/badge/protocol-MCP-black)](https://modelcontextprotocol.io)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776ab)](https://www.python.org/)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776ab)](https://www.python.org/)
 
 </div>
 
-> **Project status: pre-alpha — specification only.**
-> This repository currently contains no runnable code. The product requirements are written,
-> the architecture is decided, implementation of `v0.1` has not started.
-> Nothing below is a claim about shipped functionality; it describes what is being built.
-> Watch the repo or open an issue if you want to help shape it.
+> **Project status: pre-alpha — runnable v0.1 base.**
+> A local Docker stack with the three read-only MCP tools, rights-filtered vector search,
+> S3 ingestion and an audit log runs today — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+> Not yet: authentication (development identity only, bind to localhost), image-content
+> embeddings (text-only for now), commercial DAM adapters. Everything else below describes
+> what is being built, not what has shipped.
 
 ---
 
@@ -42,7 +43,7 @@ Two operating modes:
 
 | Mode | What it is | Who it's for |
 | --- | --- | --- |
-| **Overlay** (core product) | Sits in front of S3/MinIO and commercial DAMs (Bynder, Canto, Celum, AEM). Originals stay in the source system; only metadata, embeddings and thumbnails are indexed. | Enterprises with an existing DAM landscape |
+| **Overlay** (core product) | Sits in front of S3-compatible storage and commercial DAMs (Bynder, Canto, Celum, AEM). Originals stay in the source system; only metadata, embeddings and thumbnails are indexed. | Enterprises with an existing DAM landscape |
 | **Standalone** | Full DAM with its own storage | Developers and self-hosters getting started |
 
 There is **no web dashboard** — by design. Previews and reviews render as image responses and
@@ -85,18 +86,18 @@ flowchart TD
   G --> E[Core engine]
   E --> A[Adapter layer]
   E --> P[(Postgres + pgvector)]
-  E --> W[Workers<br/>Celery + Redis]
-  A --> S[S3 / MinIO]
+  E --> W[Workers<br/>Celery + Valkey]
+  A --> S[S3 / SeaweedFS]
   A --> D[Bynder / Canto / Celum / AEM]
 ```
 
 | Component | Choice | Why |
 | --- | --- | --- |
-| Language / API | Python 3.11+, FastAPI, official MCP Python SDK | mature SDK, native ML and media libraries |
+| Language / API | Python 3.12+, FastAPI, official MCP Python SDK | mature SDK, native ML and media libraries |
 | Transport | MCP over stdio (local) and Streamable HTTP (server) | desktop clients and remote operation |
 | Database | PostgreSQL + pgvector | relations, rights and vectors in one system |
-| Storage | S3-compatible (MinIO, AWS S3) | pre-signed URLs instead of streaming through the server |
-| Queue | Celery + Redis | established, scales horizontally |
+| Storage | S3-compatible (SeaweedFS locally, any S3) | pre-signed URLs instead of streaming through the server |
+| Queue | Celery + Valkey | established, scales horizontally; Valkey is BSD-licensed |
 | LLM routing | Ollama local, cloud APIs as fallback | near-zero marginal cost for routine tasks |
 | Packaging | uv, Docker Compose, Helm chart later | fast local start, Kubernetes for enterprise |
 
@@ -140,7 +141,7 @@ must never surface more than the source system would.
 
 | Version | Content | Exit criterion |
 | --- | --- | --- |
-| **v0.1** | MCP gateway, data model, S3/MinIO adapter, fast ingestion, `search_assets`, `get_asset_details`, audit log | search across 100k test assets from Claude Desktop |
+| **v0.1** | MCP gateway, data model, S3-compatible storage adapter, fast ingestion, `search_assets`, `get_asset_details`, audit log | search across 100k test assets from Claude Desktop |
 | **v0.2** | first commercial DAM adapter with ACL sync, `list_sources`, thumbnail responses | customer pilot, zero rights violations in testing |
 | **v0.3** | deep pipeline (OCR, captions, video, Whisper), write tools with `dry_run` | Recall@10 measurably better than the source system's tag search |
 | **v0.4** | AI labelling / C2PA, collections, 3D pipeline, second DAM adapter | one compliance workflow live in a pilot |
@@ -158,16 +159,20 @@ Timelines are deliberately omitted until team and capacity are fixed.
 
 ## Getting started
 
-> Not available yet — `v0.1` is unimplemented. The intended flow once it lands:
+Requires Docker (Colima or Docker Desktop), [uv](https://docs.astral.sh/uv/) and
+[Ollama](https://ollama.com) running natively with `ollama pull nomic-embed-text`.
 
 ```bash
 git clone https://github.com/OpenAgenticDAM/Core.git
 cd Core
-docker compose up -d        # Postgres + pgvector, Redis, MinIO
+./scripts/init-env.sh             # .env with random credentials
+./scripts/up.sh                   # Postgres+pgvector, Valkey, SeaweedFS, migrate, gateway, worker
 uv sync
-alembic upgrade head
-# start worker + MCP server, then register the server in claude_desktop_config.json
+uv run python scripts/smoke.py    # demo images -> worker ingest -> all MCP tools
 ```
+
+MCP endpoint: `http://127.0.0.1:8000/mcp`. Full setup, Claude Desktop config and measured
+RAM/disk requirements: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 Hardware guidance: CPU-only operation is supported (CPU embeddings, reduced deep pipeline).
 A GPU worker with 20–24 GB VRAM is recommended for the deep pipeline. For datacenter
@@ -190,7 +195,7 @@ Targets for the MVP. These are assumptions and will be calibrated in the first p
 ## Open core
 
 Everything in this repository is Apache 2.0 and self-hostable: gateway, core engine,
-S3/MinIO adapter, ingestion, search, audit log.
+S3-compatible storage adapter, ingestion, search, audit log.
 
 Commercial offerings are built on the same code base and carry the same brand
 (*OpenAgenticDAM Enterprise*, *OpenAgenticDAM Cloud*): commercial DAM adapters, SSO/SAML,
@@ -199,6 +204,7 @@ stays open source — what is sold is evaluation and assurance for auditors.
 
 ## Documentation
 
+- [Architecture & local setup](docs/ARCHITECTURE.md) — what is implemented, stack decisions, resource requirements
 - [Product Requirements Document](docs/PRD.md) — full spec: problem, market, scope, tools, data model, security, roadmap, business model
 - [PRD (German original)](docs/PRD.de.md) — authoritative source version
 

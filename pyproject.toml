@@ -1,0 +1,58 @@
+[project]
+name = "openagenticdam"
+version = "0.1.0"
+description = "Open, rights-aware MCP layer that makes existing media libraries agent-ready - without migration."
+authors = [
+    { name = "OpenAgenticDAM", email = "332576532+OpenAgenticDAM@users.noreply.github.com" }
+]
+requires-python = ">=3.12"
+license = "Apache-2.0"
+dependencies = [
+    "alembic>=1.14",
+    "boto3>=1.40",
+    "celery[redis]>=5.5",
+    "httpx>=0.28",
+    "mcp>=1.20",
+    "numpy>=2.5.3",
+    "pgvector>=0.4",
+    "pillow>=11",
+    "pillow-heif>=1.8",
+    "psycopg[binary,pool]>=3.2",
+    "pydantic-settings>=2.6",
+    "sqlalchemy>=2.0",
+]
+
+[project.scripts]
+openagenticdam = "openagenticdam:main"
+
+[build-system]
+requires = ["uv_build>=0.11.7,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "boto3-stubs>=1.43.106",
+    "mypy>=2.3.1",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.16.10",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-m 'not scale'"
+markers = ["scale: seeds 50k assets; run with -m scale"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S", "BLE"]
+ignore = ["S101"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S608"]
+"migrations/*" = ["S608"]
+"scripts/dev_app_host.py" = ["E501"]  # embedded host page (JS in a string)

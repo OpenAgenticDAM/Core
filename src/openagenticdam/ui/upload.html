@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>OpenAgenticDAM – Bilder hochladen</title>
+<style>
+  :root {
+    --bg: var(--color-background-primary, light-dark(#fff, #1a1a1a));
+    --fg: var(--color-text-primary, light-dark(#171717, #f5f5f5));
+    --muted: var(--color-text-secondary, light-dark(#666, #a3a3a3));
+    --border: var(--color-border-primary, light-dark(#ddd, #3a3a3a));
+    --accent: var(--color-text-info, #2f6fde);
+    --danger: var(--color-text-danger, #d33);
+    --ok: var(--color-text-success, #2a8a3e);
+    font-family: var(--font-sans, system-ui, -apple-system, sans-serif);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; color: var(--fg); background: transparent; font-size: 14px; }
+  main { padding: 12px; display: grid; gap: 10px; }
+  .drop {
+    border: 2px dashed var(--border); border-radius: 10px; padding: 22px 12px;
+    text-align: center; cursor: pointer; color: var(--muted);
+  }
+  .drop.over, .drop:focus-visible { border-color: var(--accent); color: var(--fg); outline: none; }
+  .drop strong { color: var(--fg); }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  label { display: grid; gap: 4px; color: var(--muted); font-size: 12px; }
+  input[type=text] {
+    font: inherit; color: var(--fg); background: var(--bg);
+    border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
+  }
+  button {
+    font: inherit; border-radius: 6px; padding: 7px 12px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--bg); color: var(--fg);
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+  li { display: grid; grid-template-columns: 44px 1fr auto; gap: 8px; align-items: center; }
+  .uuid { font-family: var(--font-mono, ui-monospace, monospace); font-size: 11px; color: var(--muted);
+          user-select: all; overflow-wrap: anywhere; }
+  li img { width: 44px; height: 44px; object-fit: cover; border-radius: 6px; background: var(--border); }
+  .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bar { height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; margin-top: 4px; }
+  .bar > span { display: block; height: 100%; width: 0; background: var(--accent); transition: width .15s; }
+  .state { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .state.ok { color: var(--ok); } .state.err { color: var(--danger); }
+  .actions { display: flex; gap: 8px; justify-content: flex-end; }
+  .hint { color: var(--muted); font-size: 12px; margin: 0; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+</style>
+</head>
+<body>
+<main>
+  <div class="drop" id="drop" tabindex="0" role="button" aria-describedby="limits">
+    <strong>Bilder hierher ziehen</strong> oder klicken zum Auswählen
+    <input class="sr" type="file" id="file" multiple accept="image/jpeg,image/png,image/webp,image/tiff,image/gif,image/heic,image/heif,.heic,.heif">
+  </div>
+  <p class="hint" id="limits">JPEG, HEIC, PNG, WebP, TIFF, GIF · Original wird gespeichert · max. <span id="max">…</span> MB pro Datei</p>
+  <div class="row">
+    <label>Titel / Beschreibung (für alle)
+      <input type="text" id="title" maxlength="300" placeholder="z. B. Alpentour Stilfser Joch">
+    </label>
+    <label>Tags, mit Komma getrennt
+      <input type="text" id="tags" maxlength="300" placeholder="ducati, alpen, 2026">
+    </label>
+  </div>
+  <ul id="list" aria-live="polite"></ul>
+  <div class="actions">
+    <button id="tell" disabled>Claude Bescheid geben</button>
+    <button id="go" class="primary" disabled>Hochladen</button>
+  </div>
+</main>
+<script>
+"use strict";
+const PROTOCOL_VERSION = "2026-01-26";
+let maxBytes = 25 * 1024 * 1024;
+let chunkBytes = 512 * 1024;
+let nextId = 1;
+const pending = new Map();
+const queue = [];          // {file, li, state}
+const done = [];           // {asset_id, file_name}
+
+// ---------- minimal MCP Apps transport (JSON-RPC 2.0 over postMessage) ----------
+function post(msg) { window.parent.postMessage(msg, "*"); }
+function request(method, params) {
+  const id = nextId++;
+  post({ jsonrpc: "2.0", id, method, params });
+  return new Promise((resolve, reject) => pending.set(id, { resolve, reject }));
+}
+function notify(method, params) { post({ jsonrpc: "2.0", method, params }); }
+
+window.addEventListener("message", (ev) => {
+  if (ev.source !== window.parent) return;
+  const m = ev.data;
+  if (!m || m.jsonrpc !== "2.0") return;
+  if (m.id !== undefined && !m.method) {                   // response to our request
+    const p = pending.get(m.id); if (!p) return;
+    pending.delete(m.id);
+    m.error ? p.reject(new Error(m.error.message || "host error")) : p.resolve(m.result);
+  } else if (m.method && m.id !== undefined) {             // request from host
+    if (m.method === "ping" || m.method === "ui/resource-teardown") post({ jsonrpc: "2.0", id: m.id, result: {} });
+    else post({ jsonrpc: "2.0", id: m.id, error: { code: -32601, message: "Method not found" } });
+  } else if (m.method === "ui/notifications/host-context-changed") {
+    applyContext(m.params || {});
+  } else if (m.method === "ui/notifications/tool-result") {
+    const sc = m.params && m.params.structuredContent;
+    if (sc && sc.max_bytes) setLimits(sc);
+  }
+});
+
+function applyContext(ctx) {
+  const vars = ctx.styles && ctx.styles.variables;
+  if (vars) for (const [k, v] of Object.entries(vars)) if (v) document.documentElement.style.setProperty(k, v);
+  if (ctx.theme) document.documentElement.style.colorScheme = ctx.theme;
+}
+function setLimits(sc) {
+  maxBytes = sc.max_bytes; chunkBytes = sc.chunk_bytes || chunkBytes;
+  document.getElementById("max").textContent = Math.round(maxBytes / 1048576);
+}
+function reportSize() {
+  notify("ui/notifications/size-changed", { height: Math.ceil(document.documentElement.getBoundingClientRect().height) });
+}
+
+async function callTool(name, args) {
+  const res = await request("tools/call", { name, arguments: args });
+  if (res.isError) {
+    const t = (res.content || []).map((c) => c.text || "").join(" ").trim();
+    throw new Error(t || "Fehler");
+  }
+  return res.structuredContent || {};
+}
+
+// ---------- UI ----------
+const drop = document.getElementById("drop");
+const input = document.getElementById("file");
+const list = document.getElementById("list");
+const go = document.getElementById("go");
+const tell = document.getElementById("tell");
+setLimits({ max_bytes: maxBytes, chunk_bytes: chunkBytes });
+
+drop.addEventListener("click", () => input.click());
+drop.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); input.click(); } });
+drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); addFiles(e.dataTransfer.files); });
+input.addEventListener("change", () => { addFiles(input.files); input.value = ""; });
+
+function addFiles(files) {
+  for (const file of files) {
+    const li = document.createElement("li");
+    const img = document.createElement("img"); img.alt = "";
+    const mid = document.createElement("div");
+    const name = document.createElement("div"); name.className = "name"; name.textContent = file.name;
+    const bar = document.createElement("div"); bar.className = "bar"; bar.appendChild(document.createElement("span"));
+    const state = document.createElement("div"); state.className = "state";
+    mid.append(name, bar); li.append(img, mid, state); list.appendChild(li);
+    const item = { file, li, state, bar: bar.firstChild, status: "queued" };
+    if (!file.type.startsWith("image/") && !/\.(heic|heif)$/i.test(file.name)) fail(item, "kein Bild");
+    else if (file.size > maxBytes) fail(item, "zu groß");
+    else {
+      state.textContent = (file.size / 1048576).toFixed(1) + " MB";
+      const r = new FileReader(); r.onload = () => { img.src = r.result; }; r.readAsDataURL(file);
+    }
+    queue.push(item);
+  }
+  go.disabled = !queue.some((q) => q.status === "queued");
+}
+function fail(item, msg) { item.status = "error"; item.state.textContent = msg; item.state.className = "state err"; }
+
+function toB64(u8) {
+  let s = "";
+  for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+
+async function uploadOne(item, title, tags) {
+  item.status = "uploading"; item.state.textContent = "lädt …"; item.state.className = "state";
+  const bytes = new Uint8Array(await item.file.arrayBuffer());
+  const begin = await callTool("upload_begin", { file_name: item.file.name, size_bytes: bytes.length });
+  for (let off = 0; off < bytes.length; off += begin.chunk_bytes) {
+    const part = bytes.subarray(off, off + begin.chunk_bytes);
+    await callTool("upload_chunk", { upload_id: begin.upload_id, offset: off, data_b64: toB64(part) });
+    item.bar.style.width = Math.round(((off + part.length) / bytes.length) * 100) + "%";
+  }
+  item.state.textContent = "indexiert …";
+  const res = await callTool("upload_commit", {
+    upload_id: begin.upload_id, title: title || null, tags,
+    file_modified_at: item.file.lastModified ? new Date(item.file.lastModified).toISOString() : null,
+  });
+  const fi = res.file_info || {};
+  const uid = document.createElement("div"); uid.className = "uuid";
+  uid.textContent = "UUID " + res.asset_id; uid.title = "Klicken markiert die UUID zum Kopieren";
+  item.bar.parentElement.replaceWith(uid);
+  item.status = "done"; item.state.className = "state ok";
+  item.state.textContent = "✓ " + [fi.resolution, fi.format, fi.file_size].filter(Boolean).join(" · ");
+  if (fi.created_at) item.state.title = "erstellt " + fi.created_at.replace("T", " ").slice(0, 16);
+  done.push({ asset_id: res.asset_id, file_name: res.file_name, info: fi });
+}
+
+go.addEventListener("click", async () => {
+  go.disabled = true;
+  const title = document.getElementById("title").value.trim();
+  const tags = document.getElementById("tags").value.split(",").map((t) => t.trim()).filter(Boolean).slice(0, 20);
+  for (const item of queue.filter((q) => q.status === "queued")) {
+    try { await uploadOne(item, title, tags); }
+    catch (e) { fail(item, String(e.message || e).slice(0, 80)); }
+  }
+  if (done.length) {
+    tell.disabled = false;
+    // Keep the model informed without forcing a new turn.
+    request("ui/update-model-context", { content: [{ type: "text", text: summary() }] }).catch(() => {});
+  }
+});
+tell.addEventListener("click", async () => {
+  tell.disabled = true;
+  try { await request("ui/message", { role: "user", content: { type: "text", text: summary() } }); }
+  catch { tell.disabled = false; }
+});
+function summary() {
+  return `Ich habe ${done.length} Bild(er) in OpenAgenticDAM hochgeladen: ` +
+    done.map((d) => `${d.file_name} (${[d.info.resolution, d.info.format, d.info.file_size].filter(Boolean).join(", ")}; asset_id ${d.asset_id})`).join("; ") + ".";
+}
+
+new ResizeObserver(reportSize).observe(document.documentElement);
+
+(async () => {
+  try {
+    const init = await request("ui/initialize", {
+      appInfo: { name: "OpenAgenticDAM Upload", version: "0.1.0" },
+      appCapabilities: { availableDisplayModes: ["inline"] },
+      protocolVersion: PROTOCOL_VERSION,
+    });
+    applyContext((init && init.hostContext) || {});
+    notify("ui/notifications/initialized", {});
+    reportSize();
+  } catch (e) {
+    document.getElementById("limits").textContent = "Verbindung zum Chat fehlgeschlagen: " + e.message;
+  }
+})();
+</script>
+</body>
+</html>

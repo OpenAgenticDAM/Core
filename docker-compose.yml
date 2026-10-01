@@ -1,0 +1,120 @@
+# OpenAgenticDAM — local development stack (v0.1 base)
+#
+#   ./scripts/init-env.sh        # once: writes .env with random credentials
+#   docker compose up -d --build
+#
+# All published ports bind to 127.0.0.1 only. Ollama is NOT part of this stack:
+# it runs natively on the host (Metal GPU on macOS) and is reached via
+# host.docker.internal.
+
+name: openagenticdam
+
+x-app: &app
+  build: .
+  image: openagenticdam:dev
+  env_file: .env
+  environment:
+    OAD_DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    OAD_BROKER_URL: redis://valkey:6379/0
+    OAD_S3_ENDPOINT: http://seaweedfs:8333
+    OAD_OLLAMA_URL: ${OAD_OLLAMA_URL:-http://host.docker.internal:11434}
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.7-pg17
+    # Dev: cap WAL retention (default max_wal_size=1GB kept ~400 MB of WAL around).
+    command: ["postgres", "-c", "max_wal_size=256MB", "-c", "min_wal_size=64MB"]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?run scripts/init-env.sh}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run scripts/init-env.sh}
+      POSTGRES_DB: ${POSTGRES_DB:?run scripts/init-env.sh}
+    ports:
+      - "127.0.0.1:${OAD_POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  valkey:
+    image: valkey/valkey:8.1.10-alpine3.24
+    command: ["valkey-server", "--save", "", "--appendonly", "no", "--maxmemory", "128mb"]
+    ports:
+      - "127.0.0.1:${OAD_VALKEY_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  seaweedfs:
+    # Single-process "weed mini": master + volume + filer + S3 gateway.
+    image: chrislusf/seaweedfs:4.48
+    environment:
+      AWS_ACCESS_KEY_ID: ${OAD_S3_ACCESS_KEY:?run scripts/init-env.sh}
+      AWS_SECRET_ACCESS_KEY: ${OAD_S3_SECRET_KEY:?run scripts/init-env.sh}
+      S3_BUCKET: ${OAD_S3_BUCKET:-oad-assets}
+    ports:
+      - "127.0.0.1:${OAD_S3_PORT:-8333}:8333"
+    volumes:
+      - weeddata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8333/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  migrate:
+    <<: *app
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  gateway:
+    <<: *app
+    command: ["openagenticdam", "serve", "--transport", "streamable-http", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "127.0.0.1:${OAD_GATEWAY_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      valkey:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+
+  worker:
+    <<: *app
+    command: ["celery", "-A", "openagenticdam.worker", "worker", "--loglevel=INFO", "--concurrency=2"]
+    healthcheck:
+      test: ["CMD", "celery", "-A", "openagenticdam.worker", "inspect", "ping", "--timeout", "5"]
+      interval: 20s
+      timeout: 15s
+      retries: 6
+      start_period: 10s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      valkey:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  weeddata:
