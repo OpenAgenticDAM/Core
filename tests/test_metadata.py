@@ -158,7 +158,7 @@ async def test_heic_from_iphone_style_file(settings, tenant):  # noqa: F811
     async with Client(build_server(settings, tenant_id=tenant)) as client:
         aid = (await _upload(client, "IMG_8419.HEIC", buf.getvalue())).structured_content["asset_id"]
     data = _meta(settings, aid)[0][1]
-    assert data["File:FileType"] == "HEIC" or data["File:FileType"] == "HEIF"
+    assert data["File:FileType"] == "HEIC"
     assert data["IFD0:Model"] == "iPhone 14 Pro"
 
 

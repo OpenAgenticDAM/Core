@@ -21,6 +21,7 @@ from PIL import ExifTags, Image
 
 from openagenticdam.config import Settings
 from openagenticdam.embeddings import embed_text
+from openagenticdam.imageformat import sniff
 from openagenticdam.metadata import AI_SOURCE_TYPES, ai_source_type, extract
 from openagenticdam.renditions import Rendition, make_renditions, to_rgb, upright
 from openagenticdam.storage import s3_client
@@ -165,18 +166,25 @@ def ingest_bytes(
     # Everything ExifTool can read, before anything is written: a broken extractor fails the ingest.
     meta = extract(data, settings.exiftool)
     s3 = s3_client(settings)
+    # The bytes decide: object stores often say binary/octet-stream for iPhone HEICs, and a
+    # Content-Type claiming "image/..." does not make garbage an image.
+    detected = sniff(data)
+    if detected:
+        display_format, mime = detected
+    elif mime.startswith("image/"):
+        mime = "application/octet-stream"
     tech: dict[str, object] = {"file_modified_at": file_modified_at, "captured_at": None}
     colours: list[dict[str, object]] = []
     renditions: list[Rendition] = []
 
-    if mime.startswith("image/"):
+    if detected:
         with Image.open(io.BytesIO(data)) as img:
             img.load()
             shown = upright(img)  # dimensions as a viewer displays them (EXIF orientation applied)
             tech.update(
                 width=shown.width,
                 height=shown.height,
-                format=img.format,
+                format=display_format,
                 exif=_exif(img),
                 captured_at=captured_at(img),
             )

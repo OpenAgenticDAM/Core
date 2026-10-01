@@ -20,23 +20,15 @@ import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-import pillow_heif
 from PIL import Image
+
+from openagenticdam.imageformat import FORMAT_MIME, heif_mime
 
 UPLOAD_CHUNK_BYTES = 512 * 1024
 UPLOAD_TTL_SECONDS = 3600
 MAX_PIXELS = 100_000_000  # explicit decompression-bomb ceiling (Pillow's default warns at ~89 MP)
 
-ALLOWED_FORMATS = {
-    "JPEG": "image/jpeg",
-    "PNG": "image/png",
-    "WEBP": "image/webp",
-    "TIFF": "image/tiff",
-    "GIF": "image/gif",
-    "HEIF": "image/heif",  # HEIC from iPhones; pillow-heif reports both as HEIF
-}
-
-pillow_heif.register_heif_opener()
+ALLOWED_FORMATS = FORMAT_MIME
 
 
 class UploadError(Exception):
@@ -183,4 +175,4 @@ def validate_image(data: bytes) -> tuple[str, tuple[int, int]]:
         raise
     except (OSError, SyntaxError, ValueError, Image.DecompressionBombError) as exc:
         raise UploadError("invalid_image", "file is not a readable image") from exc
-    return ALLOWED_FORMATS[fmt], (w, h)
+    return (heif_mime(data[:16]) if fmt == "HEIF" else ALLOWED_FORMATS[fmt]), (w, h)

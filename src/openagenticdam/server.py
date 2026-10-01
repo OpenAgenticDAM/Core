@@ -34,6 +34,7 @@ from openagenticdam.db import connect
 from openagenticdam.dedupe import find_visible_duplicate, lock_content
 from openagenticdam.embeddings import EmbeddingError, embed_text
 from openagenticdam.fileinfo import FileInfo, build_file_info, describe, human_size
+from openagenticdam.imageformat import DISPLAY_FORMATS
 from openagenticdam.ingest import OWNED_SOURCE_KINDS, delete_asset_rows, ensure_source, ingest_bytes
 from openagenticdam.search import Principal, search_assets_sql
 from openagenticdam.storage import delete_objects, presign_get, s3_client
@@ -600,7 +601,7 @@ def _register_upload_tools(
         return UploadLimits(
             max_bytes=settings.upload_max_bytes,
             chunk_bytes=UPLOAD_CHUNK_BYTES,
-            formats=["JPEG", "PNG", "WebP", "TIFF", "GIF"],
+            formats=DISPLAY_FORMATS,
         )
 
     @apps.tool(resource_uri=UPLOAD_UI_URI, visibility=["app"])

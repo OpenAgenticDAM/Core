@@ -57,8 +57,8 @@ async def test_heic_upload_keeps_original_bytes_and_creates_renditions(settings,
         assert not res.is_error, res.content
         out = res.structured_content
         info = out["file_info"]
-        assert info["format"] == "HEIF"
-        assert info["mime_type"] == "image/heif"
+        assert info["format"] == "HEIC"  # brand "heic", like iPhones write it
+        assert info["mime_type"] == "image/heic"
         assert (info["width"], info["height"]) == (2400, 1600)
         assert info["created_at"] == "2026-08-02T07:15:00"
         aid = out["asset_id"]
