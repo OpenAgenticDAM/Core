@@ -70,13 +70,12 @@ async def test_file_info_in_upload_search_and_details_with_exif_capture_time(set
 
 
 async def test_every_asset_carries_its_uuid_in_file_info_and_label(settings, tenant):  # noqa: F811
-    data = _jpeg_with_exif(None)
     async with Client(build_server(settings, tenant_id=tenant)) as client:
-        a = (await _upload(client, "a.jpg", data, title="Asset A")).structured_content
-        b = (await _upload(client, "b.jpg", data, title="Asset B")).structured_content
+        a = (await _upload(client, "a.jpg", _jpeg_with_exif(None), title="Asset A")).structured_content
+        b = (await _upload(client, "b.jpg", _jpeg_with_exif(None), title="Asset B")).structured_content
         for up in (a, b):
             assert str(uuid.UUID(up["file_info"]["asset_id"])) == up["asset_id"]  # canonical UUID
-        assert a["asset_id"] != b["asset_id"]  # identical bytes still get distinct ids
+        assert a["asset_id"] != b["asset_id"]  # noise images: different bytes, distinct ids
 
         res = await client.call_tool("search_assets", {"query": "Asset", "limit": 5})
         for hit in res.structured_content["hits"]:

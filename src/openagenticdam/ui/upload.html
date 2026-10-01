@@ -179,7 +179,16 @@ function toB64(u8) {
 async function uploadOne(item, title, tags) {
   item.status = "uploading"; item.state.textContent = "lädt …"; item.state.className = "state";
   const bytes = new Uint8Array(await item.file.arrayBuffer());
-  const begin = await callTool("upload_begin", { file_name: item.file.name, size_bytes: bytes.length });
+  const sha256 = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))]
+    .map((b) => b.toString(16).padStart(2, "0")).join("");
+  const begin = await callTool("upload_begin", { file_name: item.file.name, size_bytes: bytes.length, sha256 });
+  if (begin.duplicate_of) {  // identical file already stored: nothing is sent
+    item.bar.parentElement.remove();
+    item.status = "done"; item.state.className = "state ok";
+    item.state.textContent = "✓ bereits vorhanden – übersprungen";
+    done.push({ asset_id: begin.duplicate_of, file_name: item.file.name, info: {}, duplicate: true });
+    return;
+  }
   for (let off = 0; off < bytes.length; off += begin.chunk_bytes) {
     const part = bytes.subarray(off, off + begin.chunk_bytes);
     await callTool("upload_chunk", { upload_id: begin.upload_id, offset: off, data_b64: toB64(part) });
@@ -190,6 +199,13 @@ async function uploadOne(item, title, tags) {
     upload_id: begin.upload_id, title: title || null, tags,
     file_modified_at: item.file.lastModified ? new Date(item.file.lastModified).toISOString() : null,
   });
+  if (res.duplicate_of) {
+    item.bar.parentElement.remove();
+    item.status = "done"; item.state.className = "state ok";
+    item.state.textContent = "✓ bereits vorhanden als " + res.file_name + " – übersprungen";
+    done.push({ asset_id: res.asset_id, file_name: res.file_name, info: res.file_info || {}, duplicate: true });
+    return;
+  }
   const fi = res.file_info || {};
   const uid = document.createElement("div"); uid.className = "uuid";
   uid.textContent = "UUID " + res.asset_id; uid.title = "Klicken markiert die UUID zum Kopieren";
@@ -220,8 +236,12 @@ tell.addEventListener("click", async () => {
   catch { tell.disabled = false; }
 });
 function summary() {
-  return `Ich habe ${done.length} Bild(er) in OpenAgenticDAM hochgeladen: ` +
-    done.map((d) => `${d.file_name} (${[d.info.resolution, d.info.format, d.info.file_size].filter(Boolean).join(", ")}; asset_id ${d.asset_id})`).join("; ") + ".";
+  const fresh = done.filter((d) => !d.duplicate), dup = done.filter((d) => d.duplicate);
+  let text = `Ich habe ${fresh.length} Bild(er) in OpenAgenticDAM hochgeladen` + (fresh.length ? ": " +
+    fresh.map((d) => `${d.file_name} (${[d.info.resolution, d.info.format, d.info.file_size].filter(Boolean).join(", ")}; asset_id ${d.asset_id})`).join("; ") : "") + ".";
+  if (dup.length) text += ` ${dup.length} Datei(en) waren bereits vorhanden und wurden übersprungen: ` +
+    dup.map((d) => `${d.file_name} (asset_id ${d.asset_id})`).join("; ") + ".";
+  return text;
 }
 
 new ResizeObserver(reportSize).observe(document.documentElement);

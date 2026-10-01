@@ -15,9 +15,9 @@ from openagenticdam.storage import s3_client
 from tests.test_upload import _upload, settings, tenant  # noqa: F401 - shared fixtures
 
 
-def _jpeg() -> bytes:
+def _jpeg(colour=(10, 120, 200)) -> bytes:
     buf = io.BytesIO()
-    Image.new("RGB", (64, 48), (10, 120, 200)).save(buf, "JPEG")
+    Image.new("RGB", (64, 48), colour).save(buf, "JPEG")
     return buf.getvalue()
 
 
@@ -91,7 +91,7 @@ async def test_confirmed_delete_removes_db_rows_thumbnail_and_owned_original(set
 async def test_token_is_bound_to_exact_asset_set(settings, tenant):  # noqa: F811
     async with Client(build_server(settings, tenant_id=tenant)) as client:
         a = (await _upload(client, "a.jpg", _jpeg())).structured_content["asset_id"]
-        b = (await _upload(client, "b.jpg", _jpeg())).structured_content["asset_id"]
+        b = (await _upload(client, "b.jpg", _jpeg((200, 10, 10)))).structured_content["asset_id"]  # distinct bytes
         token = (await client.call_tool("delete_assets", {"asset_ids": [a]})).structured_content["confirmation_token"]
         res = await client.call_tool("delete_assets", {"asset_ids": [a, b], "confirmation_token": token})
     assert res.is_error
@@ -160,3 +160,89 @@ async def test_delete_tool_is_marked_destructive(settings, tenant):  # noqa: F81
     assert tool.annotations is not None
     assert tool.annotations.destructive_hint is True
     assert tool.annotations.read_only_hint is False
+
+
+async def _seed(client, n: int) -> list[str]:
+    return [
+        (await _upload(client, f"img{i}.jpg", _jpeg((i * 37 % 256, i * 11 % 256, 99)))).structured_content["asset_id"]
+        for i in range(n)
+    ]
+
+
+async def test_delete_all_preview_counts_everything_and_deletes_nothing(settings, tenant):  # noqa: F811
+    async with Client(build_server(settings, tenant_id=tenant)) as client:
+        ids = await _seed(client, 25)
+        res = await client.call_tool("delete_assets", {"all_assets": True})
+    assert not res.is_error, res.content
+    out = res.structured_content
+    assert out["dry_run"] is True and out["total"] == 25
+    assert len(out["would_delete"]) == 20  # sample only, the count is complete
+    assert out["confirmation_token"]
+    with connect(settings) as conn:
+        assert conn.execute("SELECT count(*) FROM assets WHERE tenant_id = %s", (tenant,)).fetchone() == (len(ids),)
+
+
+async def test_delete_all_confirmed_removes_every_deletable_asset(settings, tenant):  # noqa: F811
+    t = tenant
+    key = f"test/{uuid.uuid4()}.jpg"
+    s3_client(settings).put_object(Bucket=settings.s3_bucket, Key=key, Body=_jpeg((1, 1, 1)), ContentType="image/jpeg")
+    with connect(settings) as conn:
+        src = ensure_source(conn, t, kind="s3", name="ro", bucket=settings.s3_bucket)
+        ro = ingest_s3_object(conn, settings, t, src, key, acl=["group:everyone"])  # visible, read only
+        conn.commit()
+    try:
+        async with Client(build_server(settings, tenant_id=t)) as client:
+            ids = await _seed(client, 3)
+            keys = [_row(settings, i) for i in ids]
+            prev = (await client.call_tool("delete_assets", {"all_assets": True})).structured_content
+            assert prev["total"] == 3
+            assert prev["not_deletable"] == 1  # the read-only one, counted but not touched
+            res = await client.call_tool(
+                "delete_assets", {"all_assets": True, "confirmation_token": prev["confirmation_token"]}
+            )
+        assert not res.is_error, res.content
+        assert sorted(res.structured_content["deleted"]) == sorted(ids)
+        assert all(_row(settings, i) is None for i in ids)
+        for original, thumb in keys:
+            assert not _exists(settings, original) and not _exists(settings, thumb)
+        assert _row(settings, str(ro)) is not None
+    finally:
+        s3_client(settings).delete_object(Bucket=settings.s3_bucket, Key=key)
+
+
+async def test_delete_all_token_is_void_when_assets_changed_in_between(settings, tenant):  # noqa: F811
+    async with Client(build_server(settings, tenant_id=tenant)) as client:
+        await _seed(client, 2)
+        prev = (await client.call_tool("delete_assets", {"all_assets": True})).structured_content
+        late = (await _upload(client, "late.jpg", _jpeg((7, 7, 7)))).structured_content["asset_id"]
+        res = await client.call_tool(
+            "delete_assets", {"all_assets": True, "confirmation_token": prev["confirmation_token"]}
+        )
+    assert res.is_error and "invalid_confirmation" in res.content[0].text
+    assert _row(settings, late) is not None  # nothing deleted, not even the previewed ones
+    with connect(settings) as conn:
+        assert conn.execute("SELECT count(*) FROM assets WHERE tenant_id = %s", (tenant,)).fetchone() == (3,)
+
+
+async def test_selected_token_cannot_be_used_for_delete_all(settings, tenant):  # noqa: F811
+    async with Client(build_server(settings, tenant_id=tenant)) as client:
+        a, b = await _seed(client, 2)
+        tok = (await client.call_tool("delete_assets", {"asset_ids": [a]})).structured_content["confirmation_token"]
+        res = await client.call_tool("delete_assets", {"all_assets": True, "confirmation_token": tok})
+    assert res.is_error
+    assert _row(settings, a) is not None and _row(settings, b) is not None
+
+
+async def test_delete_needs_exactly_one_of_ids_or_all(settings, tenant):  # noqa: F811
+    async with Client(build_server(settings, tenant_id=tenant)) as client:
+        (a,) = await _seed(client, 1)
+        neither = await client.call_tool("delete_assets", {})
+        both = await client.call_tool("delete_assets", {"asset_ids": [a], "all_assets": True})
+    assert neither.is_error and both.is_error
+
+
+async def test_delete_all_with_nothing_deletable(settings, tenant):  # noqa: F811
+    async with Client(build_server(settings, tenant_id=tenant)) as client:
+        res = await client.call_tool("delete_assets", {"all_assets": True})
+    assert not res.is_error
+    assert res.structured_content["total"] == 0 and res.structured_content["confirmation_token"] is None

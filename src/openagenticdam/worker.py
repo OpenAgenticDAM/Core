@@ -14,11 +14,13 @@ app.conf.update(task_acks_late=True, worker_prefetch_multiplier=1, task_serializ
 
 
 @app.task(name="ingest_object", autoretry_for=(ConnectionError,), retry_backoff=True, max_retries=5)
-def ingest_object(tenant_id: str, source_id: str, key: str, acl: list[str]) -> str:
+def ingest_object(tenant_id: str, source_id: str, key: str, acl: list[str], write_acl: list[str] | None = None) -> str:
     from openagenticdam.db import connect
     from openagenticdam.ingest import ingest_s3_object
 
     with connect(settings) as conn:
-        asset_id = ingest_s3_object(conn, settings, uuid.UUID(tenant_id), uuid.UUID(source_id), key, acl=acl)
+        asset_id = ingest_s3_object(
+            conn, settings, uuid.UUID(tenant_id), uuid.UUID(source_id), key, acl=acl, write_acl=write_acl
+        )
         conn.commit()
     return str(asset_id)

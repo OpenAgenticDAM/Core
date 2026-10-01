@@ -11,12 +11,16 @@ import json
 import uuid
 from contextlib import asynccontextmanager
 
+import httpx2
 import uvicorn
 from mcp import Client
+from mcp.client.streamable_http import streamable_http_client
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse
 from starlette.routing import Route
+
+from openagenticdam.config import Settings
 
 MCP_URL = "http://127.0.0.1:8000/mcp"
 UI_URI = "ui://openagenticdam/upload.html"
@@ -62,7 +66,8 @@ window.addEventListener("message", async (ev) => {
 
 @asynccontextmanager
 async def lifespan(app: Starlette):
-    async with Client(MCP_URL) as client:
+    http = httpx2.AsyncClient(headers={"Authorization": f"Bearer {Settings().api_token}"}, timeout=120)
+    async with http, Client(streamable_http_client(MCP_URL, http_client=http)) as client:
         app.state.client = client
         tools = {t.name: t for t in (await client.list_tools()).tools}
         app.state.app_only = {n for n, t in tools.items() if (t.meta or {}).get("ui", {}).get("visibility") == ["app"]}

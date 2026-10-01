@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 import boto3
@@ -30,3 +31,13 @@ def presign_get(settings: Settings, key: str, expires: int = 900) -> str:
     return client.generate_presigned_url(
         "get_object", Params={"Bucket": settings.s3_bucket, "Key": key}, ExpiresIn=expires
     )
+
+
+def delete_objects(settings: Settings, keys: list[str]) -> None:
+    """Remove objects whose index rows are already gone; an orphan must not fail the caller."""
+    s3 = s3_client(settings)
+    for key in keys:
+        try:
+            s3.delete_object(Bucket=settings.s3_bucket, Key=key)
+        except Exception:  # noqa: BLE001
+            logging.getLogger(__name__).exception("could not delete object %s", key)

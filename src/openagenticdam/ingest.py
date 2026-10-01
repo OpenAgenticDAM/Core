@@ -322,3 +322,27 @@ def ingest_bytes(
         (tenant, asset_id, settings.embed_model, str(vec)),
     )
     return asset_id
+
+
+# Sources whose originals live in OpenAgenticDAM's own storage (deleting the asset deletes them).
+OWNED_SOURCE_KINDS = frozenset({"upload"})
+
+
+def delete_asset_rows(conn: psycopg.Connection, tenant: uuid.UUID, ids: list[uuid.UUID]) -> list[str]:
+    """Delete assets (rights, ACL, versions, embeddings, metadata cascade). Returns the object keys
+    to remove after commit: renditions always, originals only where we own them."""
+    keys = [
+        r[0]
+        for r in conn.execute(
+            """
+            SELECT v.storage_path FROM asset_versions v JOIN assets a ON a.id = v.asset_id
+            WHERE a.tenant_id = %(t)s AND a.id = ANY(%(ids)s)
+            UNION ALL
+            SELECT a.external_id FROM assets a JOIN sources s ON s.id = a.source_id
+            WHERE a.tenant_id = %(t)s AND a.id = ANY(%(ids)s) AND s.kind = ANY(%(owned)s)
+            """,
+            {"t": tenant, "ids": ids, "owned": list(OWNED_SOURCE_KINDS)},
+        ).fetchall()
+    ]
+    conn.execute("DELETE FROM assets WHERE tenant_id = %s AND id = ANY(%s)", (tenant, ids))
+    return keys
